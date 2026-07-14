@@ -1,0 +1,885 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fluid Aqua Video Player</title>
+    <link href="https://fonts.googleapis.com/css2?family=SF+Pro+Display:wght@400;500;600&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    
+    <style>
+        :root {
+            --aqua-base: rgba(220, 245, 250, 0.2);
+            --aqua-highlight: rgba(255, 255, 255, 0.4);
+            --aqua-border: rgba(255, 255, 255, 0.3);
+            --aqua-liquid: linear-gradient(135deg, rgba(255,255,255,0.6) 0%, rgba(0,180,210,0.3) 100%);
+            /* 💧 元の綺麗ですりガラス感のあるiOS風ブラーに戻しました */
+            --ios-blur: blur(20px) saturate(140%);
+            --text-main: #ffffff;
+            --text-sub: rgba(255, 255, 255, 0.7);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-user-select: none;
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Noto Sans JP', sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body, html {
+            background: #000000;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .player-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            overflow: hidden;
+        }
+
+        .video-wrapper {
+            width: 100%;
+            height: 100%;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+
+        /* --- 字幕表示 --- */
+        .subtitle-overlay {
+            position: absolute;
+            bottom: 140px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            color: #fff;
+            padding: 10px 24px;
+            border-radius: 16px;
+            font-size: 1.15rem;
+            text-align: center;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+            max-width: 80%;
+            border: 1px solid rgba(255,255,255,0.1);
+            z-index: 5;
+        }
+        .subtitle-overlay.active { opacity: 1; }
+
+        /* --- 全体UIカバー --- */
+        .ui-wrapper {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.2) 0%, rgba(0,0,0,0) 40%, rgba(0,0,0,0) 60%, rgba(0,0,0,0.4) 100%);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            transition: opacity 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+            z-index: 10;
+        }
+        .ui-wrapper.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* 💧 水滴風ボタン（透明度・ブラーを元の状態に戻しました） */
+        .aqua-btn {
+            background: var(--aqua-base);
+            backdrop-filter: var(--ios-blur);
+            -webkit-backdrop-filter: var(--ios-blur);
+            border: 1px solid var(--aqua-border);
+            color: var(--text-main);
+            border-radius: 50%;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            box-shadow: inset 0 4px 8px rgba(255,255,255,0.3), 0 6px 15px rgba(0, 0, 0, 0.2);
+            transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.2s, background 0.2s;
+        }
+        .aqua-btn:active {
+            transform: scale(0.85) translateY(2px) !important;
+            background: rgba(200, 235, 245, 0.2);
+            box-shadow: inset 0 6px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        /* 🔍 中央のボタンの背景にある角丸の四角パネル：ここだけ完全に透明化し、ブラーも削除 */
+        .center-controls {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            display: flex;
+            align-items: center;
+            gap: 30px;
+            padding: 20px 40px;
+            background: none; /* 背景の四角を消去 */
+            backdrop-filter: none; /* ブラーを消去して文字が絶対透けるように */
+            -webkit-backdrop-filter: none;
+            border: none; /* 枠線を消去 */
+            box-shadow: none; /* 影を消去 */
+        }
+        .btn-main { width: 80px; height: 80px; }
+        .btn-main span { font-size: 40px; }
+        .btn-skip { width: 54px; height: 54px; }
+        .btn-skip span { font-size: 26px; }
+
+        /* 🌊 YouTube風：独立水流エフェクト */
+        .water-feedback-layer {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 15;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .water-ripple {
+            width: 140px;
+            height: 140px;
+            background: radial-gradient(circle, rgba(255,255,255,0.6) 0%, rgba(130,220,240,0.2) 60%, rgba(255,255,255,0) 100%);
+            border-radius: 50%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: #fff;
+            opacity: 0;
+            transform: scale(0.5);
+            backdrop-filter: blur(2px);
+            -webkit-backdrop-filter: blur(2px);
+            border: 1px solid rgba(255,255,255,0.3);
+            box-shadow: 0 0 20px rgba(100,220,255,0.3);
+        }
+
+        @keyframes ripple-wave {
+            0% { transform: scale(0.6); opacity: 0; }
+            20% { opacity: 1; }
+            100% { transform: scale(1.1) translateY(-3px); opacity: 0; }
+        }
+        .water-ripple.animate {
+            animation: ripple-wave 0.4s cubic-bezier(0.1, 0.8, 0.3, 1) forwards;
+        }
+        .water-ripple span.material-icons { font-size: 44px; text-shadow: 0 2px 10px rgba(0,0,0,0.2); }
+        .water-ripple .ripple-text { font-size: 0.9rem; font-weight: 700; margin-top: 4px; white-space: nowrap; }
+
+        /* 💡 UI表示時用の下部ポップアップ通知 (元のすりガラスに戻しました) */
+        .bottom-toast-notification {
+            position: absolute;
+            bottom: 150px;
+            left: 50%;
+            transform: translateX(-50%) translateY(15px);
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: var(--ios-blur);
+            -webkit-backdrop-filter: var(--ios-blur);
+            border: 1px solid var(--aqua-border);
+            padding: 8px 20px;
+            border-radius: 20px;
+            color: #fff;
+            font-weight: 600;
+            font-size: 0.95rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            box-shadow: inset 0 4px 8px rgba(255,255,255,0.2), 0 10px 25px rgba(0,0,0,0.2);
+            pointer-events: none;
+            opacity: 0;
+            z-index: 25;
+            transition: opacity 0.2s, transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        .bottom-toast-notification.active {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+        .bottom-toast-notification span.material-icons { font-size: 20px; }
+
+        /* ボトムコントロール */
+        .bottom-controls { padding: 40px; display: flex; flex-direction: column; gap: 20px; }
+        .top-row { display: flex; justify-content: space-between; align-items: center; }
+        .right-controls { display: flex; align-items: center; gap: 16px; }
+        
+        .volume-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: rgba(255, 255, 255, 0.12);
+            backdrop-filter: var(--ios-blur);
+            -webkit-backdrop-filter: var(--ios-blur);
+            padding: 8px 18px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+        }
+        .volume-container span { color: var(--text-main); cursor: pointer; }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            background: rgba(255, 255, 255, 0.25);
+            height: 6px;
+            border-radius: 6px;
+            outline: none;
+            cursor: pointer;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px; height: 14px;
+            border-radius: 50%;
+            background: #fff;
+        }
+        .volume-slider { width: 80px; }
+        .btn-menu { width: 46px; height: 46px; border-radius: 50%; }
+
+        /* --- 💧 進捗バー --- */
+        .progress-container { position: relative; display: flex; align-items: center; width: 100%; height: 24px; cursor: pointer; }
+        .progress-bar-wrapper {
+            width: 100%; height: 8px; background: rgba(255, 255, 255, 0.2); border-radius: 10px;
+            position: relative; backdrop-filter: blur(5px); border: 1px solid rgba(255, 255, 255, 0.15);
+            transition: height 0.2s ease;
+        }
+        .progress-container.precision .progress-bar-wrapper,
+        .progress-container:hover .progress-bar-wrapper { height: 12px; }
+        
+        .progress-fill {
+            height: 100%; width: 0%; background: var(--aqua-liquid); border-radius: 10px; position: relative;
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.4), inset 0 2px 4px rgba(255,255,255,0.5);
+            transition: width 0.1s linear;
+        }
+
+        .time-tooltip {
+            position: absolute; top: -38px; background: rgba(255, 255, 255, 0.95); color: #112228;
+            padding: 4px 10px; border-radius: 8px; font-size: 0.8rem; font-weight: 600;
+            transform: translateX(-50%); pointer-events: none; opacity: 0; transition: opacity 0.15s;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+        }
+        .progress-container:hover .time-tooltip { opacity: 1; }
+
+        /* --- 📺 設定メニュー（元のしっかりとした高級感のあるすりガラスに戻しました） --- */
+        .settings-menu {
+            position: absolute; bottom: 100px; right: 40px;
+            background: rgba(255, 255, 255, 0.12); backdrop-filter: var(--ios-blur); -webkit-backdrop-filter: var(--ios-blur);
+            border: 1px solid var(--aqua-border); border-radius: 24px; color: var(--text-main);
+            display: none; width: 280px; box-shadow: inset 0 4px 12px rgba(255,255,255,0.25), 0 25px 60px rgba(0,0,0,0.6); z-index: 30; overflow: hidden;
+        }
+        .settings-menu.active { display: block; }
+        .menu-page-wrapper { display: flex; width: 200%; transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1); }
+        .menu-page { width: 50%; padding: 14px 10px; display: flex; flex-direction: column; gap: 4px; }
+        
+        .menu-item {
+            display: flex; align-items: center; justify-content: space-between; padding: 12px 16px;
+            border-radius: 14px; cursor: pointer; font-size: 0.95rem; transition: background 0.2s;
+        }
+        .menu-item:hover { background: rgba(255, 255, 255, 0.15); }
+        .menu-item-value { font-size: 0.85rem; color: var(--text-sub); display: flex; align-items: center; gap: 4px; }
+        
+        .menu-back-header {
+            display: flex; align-items: center; gap: 8px; padding: 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+            cursor: pointer; font-weight: 600; font-size: 0.95rem; margin-bottom: 6px;
+        }
+        .check-icon { font-size: 18px; visibility: hidden; }
+        .selected .check-icon { visibility: visible; }
+
+        .switch { position: relative; display: inline-block; width: 46px; height: 24px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.2); transition: .3s; border-radius: 24px; }
+        .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; }
+        input:checked + .slider { background-color: rgba(255, 255, 255, 0.5); }
+        input:checked + .slider:before { transform: translateX(22px); }
+
+        .crypto-box { display: flex; flex-direction: column; gap: 10px; padding: 10px; }
+        .crypto-input { width: 100%; padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.3); background: rgba(0,0,0,0.3); color: #fff; outline: none; font-size: 1rem; text-align: center; }
+        .btn-dl-submit { width: 100%; padding: 10px; border-radius: 10px; border: none; background: rgba(255,255,255,0.8); color: #111; font-weight: bold; cursor: pointer; transition: background 0.2s; }
+        .btn-dl-submit:hover { background: #fff; }
+        .dl-error { color: #ff6b6b; font-size: 0.8rem; text-align: center; display: none; }
+
+        /* --- 💧 プロセカ風 Aqua Loading --- */
+        .pj-loading-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(10, 22, 26, 0.75);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            z-index: 40;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        .pj-loading-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .aqua-drops-loader { display: flex; gap: 14px; align-items: flex-end; height: 40px; }
+        .drop {
+            width: 16px; height: 16px;
+            background: linear-gradient(135deg, #ffffff 0%, #76d6ff 100%);
+            border-radius: 50%;
+            box-shadow: 0 0 15px rgba(118,214,255,0.6), inset -2px -2px 5px rgba(0,0,0,0.1);
+        }
+        @keyframes pj-bounce {
+            0%, 100% { transform: translateY(0) scale(1, 1); }
+            40% { transform: translateY(-25px) scale(0.9, 1.1); }
+            80% { transform: translateY(0) scale(1.1, 0.85); }
+        }
+        .drop:nth-child(1) { animation: pj-bounce 0.8s ease-in-out infinite; }
+        .drop:nth-child(2) { animation: pj-bounce 0.8s ease-in-out infinite 0.15s; }
+        .drop:nth-child(3) { animation: pj-bounce 0.8s ease-in-out infinite 0.3s; }
+
+        .loading-text {
+            margin-top: 20px; color: #b2e3ff; font-size: 0.9rem; letter-spacing: 2px; font-weight: 600;
+            text-shadow: 0 0 10px rgba(118,214,255,0.4); text-align: center;
+            transition: opacity 0.2s ease, transform 0.2s ease;
+        }
+
+    </style>
+</head>
+<body oncontextmenu="return false;">
+
+<div class="player-container" id="playerContainer">
+    <div class="video-wrapper" id="videoWrapper">
+        <video id="mainVideo" src="video.mp4" playsinline controlsList="nodownload nofullscreen noremoteplayback"></video>
+    </div>
+
+    <div class="subtitle-overlay" id="subOverlay"></div>
+
+    <div class="water-feedback-layer">
+        <div class="water-ripple" id="waterRipple">
+            <span class="material-icons" id="rippleIcon">play_arrow</span>
+            <div class="ripple-text" id="rippleText">再生</div>
+        </div>
+    </div>
+
+    <div class="bottom-toast-notification" id="bottomToast">
+        <span class="material-icons" id="toastIcon">fast_forward</span>
+        <span id="toastText">10秒</span>
+    </div>
+
+    <div class="pj-loading-overlay" id="loadingOverlay">
+        <div class="aqua-drops-loader">
+            <div class="drop"></div>
+            <div class="drop"></div>
+            <div class="drop"></div>
+        </div>
+        <div class="loading-text" id="loadingText">NOW LOADING</div>
+    </div>
+
+    <div class="ui-wrapper" id="uiWrapper">
+        <div></div>
+
+        <div class="center-controls" id="centerControls">
+            <button class="aqua-btn btn-skip" id="btnRewind" title="10秒巻き戻す">
+                <span class="material-icons">replay_10</span>
+            </button>
+            <button class="aqua-btn btn-main" id="btnPlayPause" title="再生/一時停止">
+                <span class="material-icons" id="playIcon">play_arrow</span>
+            </button>
+            <button class="aqua-btn btn-skip" id="btnForward" title="10秒進む">
+                <span class="material-icons">forward_10</span>
+            </button>
+        </div>
+
+        <div class="bottom-controls" id="bottomControls">
+            <div class="top-row">
+                <div class="volume-container">
+                    <span class="material-icons" id="volumeIcon">volume_up</span>
+                    <input type="range" id="volumeSlider" class="volume-slider" min="0" max="1" step="0.05" value="1">
+                </div>
+                <div class="right-controls">
+                    <button class="aqua-btn btn-menu" id="btnSettings" title="詳細設定">
+                        <span class="material-icons">settings</span>
+                    </button>
+                    <button class="aqua-btn btn-menu" id="btnFullscreen" title="フルスクリーン">
+                        <span class="material-icons" id="fullIcon">fullscreen</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="progress-container" id="progressContainer">
+                <div class="time-tooltip" id="timeTooltip">00:00</div>
+                <div class="progress-bar-wrapper">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="settings-menu" id="settingsMenu">
+        <div class="menu-page-wrapper" id="menuPageWrapper">
+            <div class="menu-page" id="mainPage">
+                <div class="menu-item" id="itemLoop">
+                    <span>ループ再生</span>
+                    <label class="switch">
+                        <input type="checkbox" id="loopToggle">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="menu-item" id="triggerSpeed">
+                    <span>再生速度</span>
+                    <div class="menu-item-value"><span id="currentSpeedLabel">標準</span><span class="material-icons">chevron_right</span></div>
+                </div>
+                <div class="menu-item" id="triggerSub">
+                    <span>字幕設定</span>
+                    <div class="menu-item-value"><span id="currentSubLabel">オフ</span><span class="material-icons">chevron_right</span></div>
+                </div>
+                <div class="menu-item" id="triggerDownload">
+                    <span>動画をダウンロード</span>
+                    <div class="menu-item-value"><span class="material-icons">download</span></div>
+                </div>
+            </div>
+
+            <div class="menu-page" id="detailPage">
+                <div class="menu-back-header" id="btnMenuBack">
+                    <span class="material-icons">chevron_left</span><span id="detailPageTitle">戻る</span>
+                </div>
+                <div id="detailOptionsContainer"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const CONFIG = {
+        downloadPassword: "1234",     
+        videoUrl: "video.mp4",         
+        videoFilename: "aqua-video.mp4", 
+        uiHideDelay: 4000              
+    };
+
+    const container = document.getElementById('playerContainer');
+    const videoWrapper = document.getElementById('videoWrapper');
+    const video = document.getElementById('mainVideo');
+    const uiWrapper = document.getElementById('uiWrapper');
+    const btnPlayPause = document.getElementById('btnPlayPause');
+    const playIcon = document.getElementById('playIcon');
+    const btnRewind = document.getElementById('btnRewind');
+    const btnForward = document.getElementById('btnForward');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressFill = document.getElementById('progressFill');
+    const timeTooltip = document.getElementById('timeTooltip');
+    const volumeIcon = document.getElementById('volumeIcon');
+    const volumeSlider = document.getElementById('volumeSlider');
+    const btnSettings = document.getElementById('btnSettings');
+    const btnFullscreen = document.getElementById('btnFullscreen');
+    const fullIcon = document.getElementById('fullIcon');
+    const settingsMenu = document.getElementById('settingsMenu');
+    const menuPageWrapper = document.getElementById('menuPageWrapper');
+    const detailOptionsContainer = document.getElementById('detailOptionsContainer');
+    const detailPageTitle = document.getElementById('detailPageTitle');
+    const btnMenuBack = document.getElementById('btnMenuBack');
+    
+    const currentSpeedLabel = document.getElementById('currentSpeedLabel');
+    const currentSubLabel = document.getElementById('currentSubLabel');
+    const loopToggle = document.getElementById('loopToggle');
+    const subOverlay = document.getElementById('subOverlay');
+
+    const waterRipple = document.getElementById('waterRipple');
+    const rippleIcon = document.getElementById('rippleIcon');
+    const rippleText = document.getElementById('rippleText');
+    const bottomToast = document.getElementById('bottomToast');
+    const toastIcon = document.getElementById('toastIcon');
+    const toastText = document.getElementById('toastText');
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const loadingText = document.getElementById('loadingText');
+
+    video.src = CONFIG.videoUrl;
+
+    const speedOptions = [
+        { value: 0.5, label: '0.5x' }, { value: 0.75, label: '0.75x' }, { value: 1.0, label: '標準' },
+        { value: 1.25, label: '1.25x' }, { value: 1.5, label: '1.5x' }, { value: 2.0, label: '2.0x' }
+    ];
+    const subOptions = [
+        { value: 'off', label: 'オフ' }, { value: 'auto', label: '自動文字起こし' }
+    ];
+
+    let currentSpeed = 1.0;
+    let currentSubMode = 'off';
+    let uiTimeout;
+    let isDraggingProgress = false; 
+    let isInitialLoading = true; 
+
+    let accumulatedSkipAmount = 0;
+    let skipDelayTimer = null;
+    let toastHideTimer = null;
+
+    window.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') e.preventDefault();
+        if (e.key === 'F12' || ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'i')) e.preventDefault();
+    });
+
+    function startWelcomeLoading() {
+        isInitialLoading = true;
+        loadingOverlay.classList.add('active');
+        loadingText.textContent = "TunaTV へようこそ";
+        
+        setTimeout(() => {
+            if(isInitialLoading) {
+                loadingText.style.opacity = 0;
+                setTimeout(() => {
+                    loadingText.textContent = "ビデオを読み込んでいます...";
+                    loadingText.style.opacity = 1;
+                }, 200);
+            }
+        }, 2500);
+
+        setTimeout(() => {
+            isInitialLoading = false;
+            loadingOverlay.classList.remove('active');
+            loadingText.textContent = "NOW LOADING"; 
+            resetUiTimeout();
+        }, 5000);
+    }
+    startWelcomeLoading();
+
+    video.addEventListener('seeking', () => {
+        if (!isDraggingProgress && !isInitialLoading && !skipDelayTimer) {
+            loadingOverlay.classList.add('active');
+        }
+    });
+    video.addEventListener('seeked', () => {
+        if (!isInitialLoading) {
+            setTimeout(() => loadingOverlay.classList.remove('active'), 150);
+        }
+    });
+
+    function triggerWaterRipple(type, label) {
+        waterRipple.classList.remove('animate');
+        void waterRipple.offsetWidth; 
+        rippleIcon.textContent = type;
+        rippleText.textContent = label;
+        waterRipple.classList.add('animate');
+    }
+
+    function triggerBottomToast(type, label) {
+        clearTimeout(toastHideTimer);
+        toastIcon.textContent = type;
+        toastText.textContent = label;
+        bottomToast.classList.add('active');
+        
+        toastHideTimer = setTimeout(() => {
+            bottomToast.classList.remove('active');
+        }, 1000);
+    }
+
+    function hideUi() {
+        if (settingsMenu.classList.contains('active')) return; 
+        if (isDraggingProgress || isInitialLoading || skipDelayTimer) return; 
+        uiWrapper.classList.add('hidden');
+    }
+
+    function showUi() {
+        if (isInitialLoading) return;
+        uiWrapper.classList.remove('hidden');
+        resetUiTimeout();
+    }
+
+    function resetUiTimeout() {
+        clearTimeout(uiTimeout);
+        if (!video.paused && !isDraggingProgress && !settingsMenu.classList.contains('active') && !isInitialLoading && !skipDelayTimer) {
+            uiTimeout = setTimeout(hideUi, CONFIG.uiHideDelay);
+        }
+    }
+
+    function togglePlay(shortcutUsed = false) {
+        if (isInitialLoading) return;
+
+        if (video.paused) {
+            video.play();
+            playIcon.textContent = 'pause';
+            if (uiWrapper.classList.contains('hidden')) {
+                triggerWaterRipple('play_arrow', '再生');
+            }
+        } else {
+            video.pause();
+            playIcon.textContent = 'play_arrow';
+            if (uiWrapper.classList.contains('hidden')) {
+                triggerWaterRipple('pause', '一時停止');
+            }
+        }
+        
+        if (!shortcutUsed) {
+            resetUiTimeout();
+        }
+    }
+    btnPlayPause.addEventListener('click', (e) => { e.stopPropagation(); togglePlay(false); });
+
+    function queueSkip(amount, shortcutUsed = false) {
+        if (isInitialLoading) return;
+
+        clearTimeout(skipDelayTimer);
+        clearTimeout(uiTimeout); 
+
+        accumulatedSkipAmount += amount;
+
+        if (video.duration) {
+            const simulatedTime = Math.min(video.duration, Math.max(0, video.currentTime + accumulatedSkipAmount));
+            const percentage = (simulatedTime / video.duration) * 100;
+            progressFill.style.width = percentage + '%';
+        }
+
+        const iconType = amount > 0 ? 'fast_forward' : 'fast_rewind';
+        const absSec = Math.abs(accumulatedSkipAmount);
+
+        if (uiWrapper.classList.contains('hidden')) {
+            triggerWaterRipple(iconType, `${absSec}秒`);
+        } else {
+            triggerBottomToast(iconType, `${absSec}秒`);
+        }
+
+        if (!shortcutUsed) {
+            resetUiTimeout();
+        }
+
+        skipDelayTimer = setTimeout(() => {
+            video.currentTime = Math.min(video.duration, Math.max(0, video.currentTime + accumulatedSkipAmount));
+            
+            accumulatedSkipAmount = 0;
+            skipDelayTimer = null;
+            resetUiTimeout();
+        }, 450);
+    }
+
+    btnRewind.addEventListener('click', (e) => { e.stopPropagation(); queueSkip(-10, false); });
+    btnForward.addEventListener('click', (e) => { e.stopPropagation(); queueSkip(10, false); });
+
+    video.addEventListener('timeupdate', () => {
+        if (video.duration && !isDraggingProgress && !skipDelayTimer) {
+            const percentage = (video.currentTime / video.duration) * 100;
+            progressFill.style.width = percentage + '%';
+        }
+        updateSubtitle();
+    });
+
+    function calculateTimeFromEvent(e) {
+        const rect = progressContainer.getBoundingClientRect();
+        const clientX = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+        return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    }
+
+    function updateBarOnSimulate(percentage) {
+        progressFill.style.transition = 'none';
+        progressFill.style.width = (percentage * 100) + '%';
+        video.currentTime = percentage * video.duration;
+    }
+
+    progressContainer.addEventListener('mousedown', (e) => {
+        if (isInitialLoading) return;
+        e.stopPropagation();
+        isDraggingProgress = true;
+        clearTimeout(uiTimeout);
+        progressContainer.classList.add('precision');
+        
+        updateBarOnSimulate(calculateTimeFromEvent(e));
+
+        function onMouseMove(moveEvent) {
+            updateBarOnSimulate(calculateTimeFromEvent(moveEvent));
+        }
+
+        function onMouseUp() {
+            isDraggingProgress = false;
+            progressContainer.classList.remove('precision');
+            progressFill.style.transition = 'width 0.1s linear';
+            
+            loadingOverlay.classList.add('active');
+            setTimeout(() => loadingOverlay.classList.remove('active'), 300);
+            resetUiTimeout();
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+        }
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+    });
+
+    progressContainer.addEventListener('mousemove', (e) => {
+        const rect = progressContainer.getBoundingClientRect();
+        const offsetX = e.clientX - rect.left;
+        let percentage = Math.max(0, Math.min(1, offsetX / rect.width));
+        if(video.duration) {
+            const t = percentage * video.duration;
+            const mins = Math.floor(t / 60).toString().padStart(2, '0');
+            const secs = Math.floor(t % 60).toString().padStart(2, '0');
+            timeTooltip.textContent = `${mins}:${secs}`;
+            timeTooltip.style.left = offsetX + 'px';
+        }
+    });
+
+    volumeSlider.addEventListener('input', (e) => {
+        video.volume = e.target.value;
+        video.muted = (video.volume === 0);
+        updateVolumeIcon();
+    });
+    function updateVolumeIcon() {
+        if(video.muted || video.volume === 0) volumeIcon.textContent = 'volume_off';
+        else if(video.volume < 0.5) volumeIcon.textContent = 'volume_down';
+        else volumeIcon.textContent = 'volume_up';
+    }
+    volumeIcon.addEventListener('click', (e) => {
+        e.stopPropagation();
+        video.muted = !video.muted;
+        updateVolumeIcon();
+        volumeSlider.value = video.muted ? 0 : video.volume;
+    });
+
+    function toggleFullscreen() {
+        if (isInitialLoading) return;
+        if (!document.fullscreenElement) {
+            container.requestFullscreen().catch(err => console.log(err));
+            fullIcon.textContent = 'fullscreen_exit';
+        } else {
+            document.exitFullscreen();
+            fullIcon.textContent = 'fullscreen';
+        }
+    }
+    btnFullscreen.addEventListener('click', (e) => { e.stopPropagation(); toggleFullscreen(); });
+
+    btnSettings.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (isInitialLoading) return;
+        const isActive = settingsMenu.classList.toggle('active');
+        menuPageWrapper.style.transform = 'translateX(0%)';
+        if (!isActive) resetUiTimeout();
+        else clearTimeout(uiTimeout);
+    });
+
+    loopToggle.addEventListener('change', (e) => { video.loop = e.target.checked; });
+
+    document.getElementById('triggerSpeed').addEventListener('click', (e) => {
+        e.stopPropagation();
+        openSubPage('再生速度', speedOptions, currentSpeed, (val) => {
+            currentSpeed = val;
+            video.playbackRate = val;
+            currentSpeedLabel.textContent = speedOptions.find(o => o.value === val).label;
+        });
+    });
+
+    document.getElementById('triggerSub').addEventListener('click', (e) => {
+        e.stopPropagation();
+        openSubPage('字幕設定', subOptions, currentSubMode, (val) => {
+            currentSubMode = val;
+            currentSubLabel.textContent = subOptions.find(o => o.value === val).label;
+            updateSubtitle();
+        });
+    });
+
+    document.getElementById('triggerDownload').addEventListener('click', (e) => {
+        e.stopPropagation();
+        detailPageTitle.textContent = '動画のダウンロード';
+        detailOptionsContainer.innerHTML = `
+            <div class="crypto-box">
+                <input type="password" id="dlPasswordInput" class="crypto-input" placeholder="パスワードを入力">
+                <button id="btnDlSubmit" class="btn-dl-submit">認証して保存</button>
+                <div id="dlError" class="dl-error">パスワードが間違っています</div>
+            </div>
+        `;
+
+        document.getElementById('btnDlSubmit').addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            const inputPass = document.getElementById('dlPasswordInput').value;
+            const errLabel = document.getElementById('dlError');
+            
+            if (inputPass === CONFIG.downloadPassword) {
+                errLabel.style.display = 'none';
+                const a = document.createElement('a');
+                a.href = video.src;
+                a.download = CONFIG.videoFilename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                menuPageWrapper.style.transform = 'translateX(0%)';
+            } else {
+                errLabel.style.display = 'block';
+            }
+        });
+
+        menuPageWrapper.style.transform = 'translateX(-50%)';
+    });
+
+    function openSubPage(title, options, currentValue, callback) {
+        detailPageTitle.textContent = title;
+        detailOptionsContainer.innerHTML = '';
+        options.forEach(opt => {
+            const item = document.createElement('div');
+            item.className = `menu-item ${opt.value === currentValue ? 'selected' : ''}`;
+            item.innerHTML = `<span>${opt.label}</span><span class="material-icons check-icon">check</span>`;
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                callback(opt.value);
+                menuPageWrapper.style.transform = 'translateX(0%)';
+            });
+            detailOptionsContainer.appendChild(item);
+        });
+        menuPageWrapper.style.transform = 'translateX(-50%)';
+    }
+
+    btnMenuBack.addEventListener('click', (e) => {
+        e.stopPropagation();
+        menuPageWrapper.style.transform = 'translateX(0%)';
+    });
+
+    container.addEventListener('click', () => {
+        if (isInitialLoading) return;
+        if (uiWrapper.classList.contains('hidden')) {
+            showUi();
+        } else {
+            settingsMenu.classList.remove('active');
+            hideUi();
+        }
+    });
+
+    document.getElementById('bottomControls').addEventListener('click', (e) => e.stopPropagation());
+    settingsMenu.addEventListener('click', (e) => e.stopPropagation());
+
+    video.addEventListener('play', resetUiTimeout);
+    video.addEventListener('pause', () => clearTimeout(uiTimeout));
+
+    function updateSubtitle() {
+        if (currentSubMode === 'off') {
+            subOverlay.classList.remove('active');
+            subOverlay.textContent = '';
+            return;
+        }
+        subOverlay.classList.add('active');
+        if (currentSubMode === 'auto') {
+            const cur = Math.floor(video.currentTime);
+            subOverlay.textContent = `[自動起こし: ${cur}秒] 音声を解析中...`;
+        }
+    }
+
+    window.addEventListener('keydown', (e) => {
+        if (document.activeElement.tagName === 'INPUT' || isInitialLoading) return;
+        switch(e.key.toLowerCase()) {
+            case 'arrowright':
+            case 'l':
+                e.preventDefault(); queueSkip(10, true); break;
+            case 'arrowleft':
+            case 'j':
+                e.preventDefault(); queueSkip(-10, true); break;
+            case ' ':
+            case 'k':
+                e.preventDefault(); togglePlay(true); break;
+            case 'f':
+                e.preventDefault(); toggleFullscreen(); break;
+        }
+    });
+</script>
+
+</body>
+</html>
